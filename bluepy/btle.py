@@ -204,11 +204,15 @@ class Peripheral:
         if self._helper is None:
             DBG("Running ", helperExe)
             self._stderr = open(os.devnull, "w") 
-            self._helper = subprocess.Popen([helperExe],
-                                            stdin=subprocess.PIPE,
-                                            stdout=subprocess.PIPE,
-                                            stderr=self._stderr,
-                                            universal_newlines=True)
+            try:
+                self._helper = subprocess.Popen([helperExe],
+                                                stdin=subprocess.PIPE,
+                                                stdout=subprocess.PIPE,
+                                                stderr=self._stderr,
+                                                universal_newlines=True)
+            except Exception, e:
+                print(e)
+                print("Did you forget to compile pybluez?")
             self._poller = select.poll()
             self._poller.register(self._helper.stdout, select.POLLIN)
 
