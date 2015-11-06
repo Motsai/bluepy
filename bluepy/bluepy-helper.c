@@ -48,9 +48,23 @@
 #define IO_CAPABILITY_NOINPUTNOOUTPUT   0x03
 
 #ifdef BLUEPY_DEBUG
-#define DBG(fmt, ...) do {printf("# %s() :" fmt "\n", __FUNCTION__, ##__VA_ARGS__); fflush(stdout);} while(0)
+#define DBG(fmt, ...) do {printf("# %s() :" fmt "\n", __FUNCTION__, ##__VA_ARGS__); fflush(stdout); \
+	} while(0)
+#else
+#ifdef BLUEPY_DEBUG_FILE_LOG
+static FILE * fp = NULL;
+
+static void try_open(void) {
+	if (!fp) {
+		fp = fopen ("bluepy-helper.log", "w");
+	}
+}
+#define DBG(fmt, ...) do {try_open();if (fp) {fprintf(fp, "%s() :" fmt "\n", __FUNCTION__, ##__VA_ARGS__); fflush(fp);} \
+	} while(0)
+
 #else
 #define DBG(fmt, ...)
+#endif
 #endif
 
 static GIOChannel *iochannel = NULL;
@@ -941,9 +955,10 @@ static void char_write_req_cb(guint8 status, const guint8 *pdu, guint16 plen,
 		return;
 	}
 
-        resp_begin(rsp_WRITE);
-        resp_end();
+	resp_begin(rsp_WRITE);
+	resp_end();
 }
+
 
 static void cmd_char_write_common(int argcp, char **argvp, int with_response)
 {
@@ -978,7 +993,7 @@ static void cmd_char_write_common(int argcp, char **argvp, int with_response)
 					char_write_req_cb, NULL);
 	else
 	{
-		gatt_write_char(attrib, handle, value, plen, NULL, NULL);
+		gatt_write_cmd(attrib, handle, value, plen, NULL, NULL);
 		resp_begin(rsp_WRITE);
 		resp_end();
 	}
@@ -1177,7 +1192,6 @@ static void pair_device_complete(uint8_t status, uint16_t length,
 static void cmd_pair(int argcp, char **argvp)
 {
 	struct mgmt_cp_pair_device cp;
-	char addr[18];
 	bdaddr_t bdaddr;
 	uint8_t io_cap = IO_CAPABILITY_NOINPUTNOOUTPUT;
 	uint8_t addr_type = BDADDR_LE_RANDOM;
@@ -1205,8 +1219,8 @@ static void cmd_pair(int argcp, char **argvp)
             MGMT_INDEX_NONE, sizeof(cp), &cp,
 	            pair_device_complete, NULL,
 	            NULL) == 0) {
-		DBG("mgmt_send(MGMT_OP_PAIR_DEVICE) failed for %s for hci%u", addr, MGMT_INDEX_NONE);
-		resp_mgmt(err_SUCCESS);
+		DBG("mgmt_send(MGMT_OP_PAIR_DEVICE) failed for %s for hci%u", opt_dst, MGMT_INDEX_NONE);
+		resp_mgmt(err_PROTO_ERR);
 		return;
 	}
 }
@@ -1227,12 +1241,11 @@ static void unpair_device_complete(uint8_t status, uint16_t length,
 static void cmd_unpair(int argcp, char **argvp)
 {
 	struct mgmt_cp_unpair_device cp;
-	char addr[18];
 	bdaddr_t bdaddr;
 	uint8_t addr_type = BDADDR_LE_RANDOM;
 
 	if (str2ba(opt_dst, &bdaddr)) {
-		DBG("str2ba failed\n");
+		DBG("str2ba failed");
 		resp_mgmt(err_NOT_FOUND);
 		return;
 	}
@@ -1250,8 +1263,8 @@ static void cmd_unpair(int argcp, char **argvp)
 	        0, sizeof(cp), &cp,
 	        unpair_device_complete, NULL,
 	            NULL) == 0) {
-		DBG("mgmt_send(MGMT_OP_UNPAIR_DEVICE) failed for %s for hci%u", addr, MGMT_INDEX_NONE);
-		resp_mgmt(err_SUCCESS);
+		DBG("mgmt_send(MGMT_OP_UNPAIR_DEVICE) failed for %s for hci%u", opt_dst, MGMT_INDEX_NONE);
+		resp_mgmt(err_PROTO_ERR);
 		return;
 	}
 }
@@ -1347,7 +1360,8 @@ static gboolean prompt_read(GIOChannel *chan, GIOCondition cond,
 	gchar *myline;
 
 	if (cond & (G_IO_HUP | G_IO_ERR | G_IO_NVAL)) {
-		g_io_channel_unref(chan);
+		DBG("Quitting IO channel error");
+		g_main_loop_quit(event_loop);
 		return FALSE;
 	}
 
@@ -1393,9 +1407,9 @@ static void mgmt_device_connected(uint16_t index, uint16_t length,
 
 static void mgmt_debug(const char *str, void *user_data)
 {
-	const char *prefix = user_data;
+	//const char *prefix = user_data;
 
-	DBG("%s%s", prefix, str);
+	DBG("%s%s", (const char *)user_data, str);
 }
 
 int main(int argc, char *argv[])
@@ -1423,7 +1437,7 @@ int main(int argc, char *argv[])
 		DBG("mgmt_send(MGMT_OP_READ_VERSION) failed");
 	}
 
-	if (mgmt_register(mgmt_master, MGMT_EV_DEVICE_CONNECTED, 0, mgmt_device_connected, NULL, NULL)) {
+	if (mgmt_register(mgmt_master, MGMT_EV_DEVICE_CONNECTED, 0, mgmt_device_connected, NULL, NULL)==0) {
 		DBG("mgmt_register(MGMT_EV_DEVICE_CONNECTED) failed");
 	}
 
@@ -1437,6 +1451,7 @@ int main(int argc, char *argv[])
 	DBG("Starting loop");
 	g_main_loop_run(event_loop);
 
+	DBG("Exiting loop");
 	cmd_disconnect(0, NULL);
 	fflush(stdout);
 	g_io_channel_unref(pchan);
